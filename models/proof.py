@@ -196,8 +196,7 @@ class Learner(BaseLearner):
                 
                 # CLIP consistency loss
                 clip_texts = [templates.format(inst) for inst in labels]
-                clip_text_feas = self._network.encode_text(
-                    self._network.tokenizer(clip_texts).to(self._device)
+                clip_text_feas = self._network.encode_text(self._network.tokenizer(clip_texts).to(self._device))
                 clip_text_feas = clip_text_feas / clip_text_feas.norm(dim=-1, keepdim=True)
                 clip_loss = cliploss(img_feas, clip_text_feas, logit_scale)
                 
