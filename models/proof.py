@@ -21,6 +21,10 @@ class Learner(BaseLearner):
         self._train_transformer = False
         self._network = Proof_Net(args, False)
         
+        # بهینه‌سازی مقداردهی اولیه
+        self._init_prototypes(args['init_cls'])
+        
+        # پارامترهای آموزش
         self.batch_size = get_attribute(args, "batch_size", 48)
         self.init_lr = get_attribute(args, "init_lr", 0.01)
         self.weight_decay = get_attribute(args, "weight_decay", 0.0005)
@@ -31,10 +35,21 @@ class Learner(BaseLearner):
         self._known_classes = 0
         self.use_cos = get_attribute(args, "use_cos", False)
         
-        # Enhanced Prototype Memory
+        # مدیریت حافظه پیشرفته
         self.global_prototypes = None
         self.prototype_memory = {}
-        self.prototype_update_factor = 0.7  # Weight for prototype updates
+        self.prototype_update_factor = 0.7
+        
+        # تنظیمات بهینه‌سازی عملکرد
+        self.feat_dim = 512  # بعد ثابت برای ویژگی‌های CLIP
+    
+    def _init_prototypes(self, num_classes):
+        """مقداردهی اولیه ایمن برای پروتوتایپ‌ها"""
+        if not hasattr(self._network, 'img_prototypes') or self._network.img_prototypes is None:
+            self._network.img_prototypes = nn.Parameter(
+                torch.zeros((num_classes, self.feat_dim), device=self._device),
+                requires_grad=False
+            )
 
     def after_task(self):
         self._known_classes = self._total_classes
@@ -76,21 +91,24 @@ class Learner(BaseLearner):
         self._cur_task += 1
         self._total_classes = self._known_classes + data_manager.get_task_size(self._cur_task)
         
-        # Initialize prototype memory
+        # به‌روزرسانی پروتوتایپ‌ها در شبکه
+        self._network.update_prototype(self._total_classes)
+        
+        # مقداردهی اولیه global_prototypes
         if self.global_prototypes is None:
             self.global_prototypes = torch.zeros(
-                (self._total_classes, self._network.img_prototypes.shape[1]),
+                (self._total_classes, self.feat_dim),
                 device=self._device
             )
         else:
-            # Expand global prototypes for new classes
-            new_prototypes = torch.zeros(
-                (self._total_classes - self.global_prototypes.shape[0], 
-                 self.global_prototypes.shape[1]),
-                device=self._device
-            )
-            self.global_prototypes = torch.cat([self.global_prototypes, new_prototypes], dim=0)
-        
+            current_size = self.global_prototypes.shape[0]
+            if current_size < self._total_classes:
+                new_prototypes = torch.zeros(
+                    (self._total_classes - current_size, self.feat_dim),
+                    device=self._device
+                )
+                self.global_prototypes = torch.cat([self.global_prototypes, new_prototypes], dim=0)
+
         self._network.update_prototype(self._total_classes)
         self._network.update_context_prompt()
         self._network.extend_task()
@@ -204,7 +222,8 @@ class Learner(BaseLearner):
                 loss = F.cross_entropy(logits, targets)
                 
                 # Combined loss with enhanced weights
-                total_loss = loss + 0.5 * clip_loss + 0.7 * protoloss
+                #total_loss = loss + 0.5 * clip_loss + 0.7 * protoloss
+                total_loss = loss + 0.4 * clip_loss + 0.6 * protoloss
 
                 optimizer.zero_grad()
                 total_loss.backward()
