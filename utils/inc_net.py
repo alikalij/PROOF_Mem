@@ -385,12 +385,24 @@ class Proof_Net(SimpleClipNet):
 
     def update_prototype(self, nb_classes):
         if self.img_prototypes is not None:
-            nb_output = len(self.img_prototypes)
-            self.img_prototypes = torch.cat([copy.deepcopy(self.img_prototypes).to(self._device), torch.zeros(nb_classes - nb_output, self.feature_dim).to(self._device)]).to(self._device)
+            nb_output = self.img_prototypes.shape[0]
+            # ایجاد تانسور جدید به عنوان nn.Parameter
+            new_prototypes = nn.Parameter(
+                torch.cat([
+                    self.img_prototypes.data,
+                    torch.zeros(nb_classes - nb_output, self.feature_dim, device=self._device)
+                ]),
+                requires_grad=False
+            )
+            self.img_prototypes = new_prototypes
         else:
-            self.img_prototypes = torch.zeros(nb_classes, self.feature_dim).to(self._device)
-        print('update prototype, now we have {} prototypes'.format(self.img_prototypes.shape[0]))
-    
+            # ایجاد اولین پروتوتایپ به عنوان nn.Parameter
+            self.img_prototypes = nn.Parameter(
+                torch.zeros(nb_classes, self.feature_dim, device=self._device),
+                requires_grad=False
+            )
+        print(f'update prototype, now we have {self.img_prototypes.shape[0]} prototypes')
+        
     def update_context_prompt(self):
         for i in range(len(self.context_prompts)):
             self.context_prompts[i].requires_grad = False

@@ -23,7 +23,7 @@ class Learner(BaseLearner):
 
         # تنظیمات بهینه‌سازی عملکرد
         self.feat_dim = 512  # بعد ثابت برای ویژگی‌های CLIP
-                
+
         # بهینه‌سازی مقداردهی اولیه
         self._init_prototypes(args['init_cls'])
         
@@ -85,7 +85,9 @@ class Learner(BaseLearner):
             else:
                 # Initialize new prototype
                 self.prototype_memory[class_index] = proto
-                self._network.img_prototypes[class_index] = proto.to(self._device)
+                #self._network.img_prototypes[class_index] = proto.to(self._device)
+                with torch.no_grad():
+                    self._network.img_prototypes.data[class_index] = proto.to(self._device)
     
     def incremental_train(self, data_manager):
         self._cur_task += 1
@@ -224,6 +226,8 @@ class Learner(BaseLearner):
                 # Combined loss with enhanced weights
                 #total_loss = loss + 0.5 * clip_loss + 0.7 * protoloss
                 total_loss = loss + 0.4 * clip_loss + 0.6 * protoloss
+                #task_factor = self._cur_task / self.args["num_tasks"]
+                #total_loss = loss + (0.6 - 0.2 * task_factor) * clip_loss + (0.4 + 0.2 * task_factor) * protoloss
 
                 optimizer.zero_grad()
                 total_loss.backward()
