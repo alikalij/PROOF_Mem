@@ -2,7 +2,7 @@
     "prefix": "-",
     "dataset": "cifar224",
     "memory_size": 500,
-    "memory_per_class": 15,  // افزایش ظرفیت حافظه
+    "memory_per_class": 15,  
     "fixed_memory": true,
     "shuffle": true,
     "init_cls": 20,
@@ -13,11 +13,11 @@
     "seed": [1993],
     "projection_type": "pure_mlp",
     "frozen_layers": "visual",
-    "tuned_epoch": 3,  // افزایش دوره‌های آموزش
-    "init_lr": 0.0015, // کاهش نرخ یادگیری
+    "tuned_epoch": 3,  
+    "init_lr": 0.0015, 
     "batch_size": 32,
-    "weight_decay": 0.03, // تنظیم بهینه
+    "weight_decay": 0.03, 
     "min_lr": 1e-6,
-    "optimizer": "adamw", // استفاده از AdamW
+    "optimizer": "adamw", 
     "num_workers": 2
 }
