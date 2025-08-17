@@ -20,7 +20,10 @@ class Learner(BaseLearner):
         
         self._train_transformer = False
         self._network = Proof_Net(args, False)
-        
+
+        # تنظیمات بهینه‌سازی عملکرد
+        self.feat_dim = 512  # بعد ثابت برای ویژگی‌های CLIP
+                
         # بهینه‌سازی مقداردهی اولیه
         self._init_prototypes(args['init_cls'])
         
@@ -39,9 +42,6 @@ class Learner(BaseLearner):
         self.global_prototypes = None
         self.prototype_memory = {}
         self.prototype_update_factor = 0.7
-        
-        # تنظیمات بهینه‌سازی عملکرد
-        self.feat_dim = 512  # بعد ثابت برای ویژگی‌های CLIP
     
     def _init_prototypes(self, num_classes):
         """مقداردهی اولیه ایمن برای پروتوتایپ‌ها"""
