@@ -18,6 +18,6 @@
     "batch_size": 32,
     "weight_decay": 0.03, 
     "min_lr": 1e-6,
-    "optimizer": "adamw", 
+    "optimizer": "adam", 
     "num_workers": 2
 }
