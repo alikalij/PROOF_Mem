@@ -288,3 +288,51 @@ class Learner(BaseLearner):
             correct += (predicts.cpu() == targets).sum()
             total += len(targets)
         return np.around(tensor2numpy(correct) * 100 / total, decimals=2)
+    
+    def _eval_cnn(self, loader):
+        """
+        متد ارزیابی سفارشی برای مدل PROOF که همزمان از ویژگی‌های تصویری و متنی استفاده می‌کند
+        """
+        self._network.eval()
+        class_to_label = self.data_manager._class_to_label
+        templates = self.data_manager._data_to_prompt
+        total_labels = class_to_label[:self._total_classes]
+        
+        # آماده‌سازی ویژگی‌های متنی
+        text_features = []
+        with torch.no_grad():
+            for l in total_labels:
+                texts = [t.format(l) for t in templates]
+                texts = self._network.tokenizer(texts).to(self._device)
+                class_embeddings = self._network.encode_text(texts)
+                class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)
+                class_embeddings = class_embeddings.mean(dim=0)
+                class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)
+                text_features.append(class_embeddings)
+            text_features = torch.stack(text_features, dim=0)
+
+        y_pred, y_true = [], []
+        for _, (_, inputs, targets) in enumerate(loader):
+            inputs = inputs.to(self._device)
+            with torch.no_grad():
+                # استخراج ویژگی‌های تصویری
+                image_features = self._network.encode_image(inputs)
+                
+                # پردازش ترنسفورمری
+                transf_image_features, transf_text_features, _, proto_feas = self._network.forward_transformer(
+                    image_features, text_features, False
+                )
+                
+                # محاسبه خروجی‌ها
+                original_outputs = image_features @ text_features.T
+                transformer_outputs = transf_image_features @ transf_text_features.T
+                proto_outputs = transf_image_features @ proto_feas.T
+                
+                # ترکیب خروجی‌ها
+                outputs = original_outputs + transformer_outputs + proto_outputs
+
+            predicts = torch.topk(outputs, k=self.topk, dim=1, largest=True, sorted=True)[1]
+            y_pred.append(predicts.cpu().numpy())
+            y_true.append(targets.cpu().numpy())
+
+        return np.concatenate(y_pred), np.concatenate(y_true)

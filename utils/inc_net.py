@@ -50,19 +50,20 @@ class BaseNet(nn.Module):
 
     def extract_vector(self, x):
         return self.convnet(x)["features"]
-
-    def forward(self, x):
-        x = self.convnet(x)
-        out = self.fc(x["features"])
+    
+    def forward(self, x, text=None, train=False):
         """
-        {
-            'fmaps': [x_1, x_2, ..., x_n],
-            'features': features
-            'logits': logits
-        }
+        متد forward به روز شده برای مدیریت ورودی‌های اختیاری متنی
         """
-        out.update(x)
-        return out
+        if text is not None:
+            # پردازش هنگامی که متن ارائه شده
+            text_features = self.encode_text(text)
+            image_features = self.encode_image(x)
+            return self.forward_transformer(image_features, text_features, train)
+        else:
+            # حالت ارزیابی - تنها از تصویر استفاده می‌کند
+            image_features = self.encode_image(x)
+            return {"features": image_features}
 
     def update_fc(self, nb_classes):
         pass

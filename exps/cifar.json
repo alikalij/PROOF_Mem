@@ -19,5 +19,6 @@
     "weight_decay": 0.03, 
     "min_lr": 1e-6,
     "optimizer": "adam", 
-    "num_workers": 2
+    "num_workers": 2,
+    "proto_update_factor": 0.7
 }
