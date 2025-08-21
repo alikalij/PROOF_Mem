@@ -11,7 +11,7 @@ from models.base import BaseLearner
 from utils.toolkit import tensor2numpy, get_attribute, ClipLoss
 import os
 
-num_workers = 8
+num_workers = 2
 
 class Learner(BaseLearner):
     def __init__(self, args):
