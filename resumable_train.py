@@ -15,7 +15,7 @@ from google.colab import drive
 # Mount Google Drive
 drive.mount('/content/drive')
 
-CHECKPOINT_DIR = "/content/drive/MyDrive/PROOF_Mem_Checkpoints"
+CHECKPOINT_DIR = "/content/drive/MyDrive/saved_model/PROOF_Mem_Checkpoints"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 def parse_args():
