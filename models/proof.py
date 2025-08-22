@@ -47,23 +47,23 @@ class Learner(BaseLearner):
 
         # مسیرهای checkpoint - باید از خارج تنظیم شوند
         self.checkpoint_dir = None
-        self._checkpoint_initialized = False
-
+        
     def set_checkpoint_dir(self, checkpoint_dir):
         """تنظیم مسیر checkpoint از خارج"""
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(self.checkpoint_dir, exist_ok=True)
-        self._checkpoint_initialized = True
     
-    def get_checkpoint_path(self, task_id, emergency=False):
+    def get_checkpoint_path(self, task_id=None, emergency=False):
         """ایجاد مسیر فایل checkpoint"""
-        if not self._checkpoint_initialized:
+        if self.checkpoint_dir is None:
             return None
             
         if emergency:
-            return os.path.join(self.checkpoint_dir, f"emergency_checkpoint.pth")
-        return os.path.join(self.checkpoint_dir, f"checkpoint_task_{task_id}.pth")
-    
+            return os.path.join(self.checkpoint_dir, "emergency_checkpoint.pth")
+        elif task_id is not None:
+            return os.path.join(self.checkpoint_dir, f"checkpoint_task_{task_id}.pth")
+        return self.checkpoint_dir
+        
     def _init_prototypes(self, num_classes):
         """مقداردهی اولیه ایمن برای پروتوتایپ‌ها"""
         if not hasattr(self._network, 'img_prototypes') or self._network.img_prototypes is None:
@@ -119,110 +119,105 @@ class Learner(BaseLearner):
         self._total_classes = self._known_classes + data_manager.get_task_size(self._cur_task)
         
         # بررسی و بارگذاری checkpoint اگر مسیر تنظیم شده باشد
-        if self._checkpoint_initialized:
+        checkpoint_loaded = False
+        if self.checkpoint_dir is not None:
             checkpoint_path = self.get_checkpoint_path(self._cur_task)
-            emergency_path = self.get_checkpoint_path(self._cur_task, emergency=True)
             
             # بررسی وجود checkpoint برای بازیابی
             if checkpoint_path and os.path.exists(checkpoint_path):
                 print(f"Loading checkpoint for task {self._cur_task}...")
                 if self.load_checkpoint(self._cur_task):
                     print(f"Successfully loaded checkpoint for task {self._cur_task}")
+                    checkpoint_loaded = True
                     # فقط ارزیابی انجام بده و به تسک بعدی برو
                     self.build_rehearsal_memory(data_manager, self.samples_per_class)
                     return
+        if not checkpoint_loaded:
+            # به‌روزرسانی پروتوتایپ‌ها در شبکه
+            self._network.update_prototype(self._total_classes)
             
-            # بررسی emergency checkpoint
-            elif emergency_path and os.path.exists(emergency_path):
-                print(f"Loading emergency checkpoint...")
-                if self.load_checkpoint(self._cur_task, emergency=True):
-                    print(f"Successfully loaded emergency checkpoint for task {self._cur_task}")
-
-        # به‌روزرسانی پروتوتایپ‌ها در شبکه
-        self._network.update_prototype(self._total_classes)
-        
-        # مقداردهی اولیه global_prototypes
-        if self.global_prototypes is None:
-            self.global_prototypes = torch.zeros(
-                (self._total_classes, self.feat_dim),
-                device=self._device
-            )
-        else:
-            current_size = self.global_prototypes.shape[0]
-            if current_size < self._total_classes:
-                new_prototypes = torch.zeros(
-                    (self._total_classes - current_size, self.feat_dim),
+            # مقداردهی اولیه global_prototypes
+            if self.global_prototypes is None:
+                self.global_prototypes = torch.zeros(
+                    (self._total_classes, self.feat_dim),
                     device=self._device
                 )
-                self.global_prototypes = torch.cat([self.global_prototypes, new_prototypes], dim=0)
+            else:
+                current_size = self.global_prototypes.shape[0]
+                if current_size < self._total_classes:
+                    new_prototypes = torch.zeros(
+                        (self._total_classes - current_size, self.feat_dim),
+                        device=self._device
+                    )
+                    self.global_prototypes = torch.cat([self.global_prototypes, new_prototypes], dim=0)
 
-        self._network.update_prototype(self._total_classes)
-        self._network.update_context_prompt()
-        self._network.extend_task()
-        
-        logging.info("Learning on {}-{}".format(self._known_classes, self._total_classes))
-        train_dataset = data_manager.get_dataset(
-            np.arange(self._known_classes, self._total_classes),
-            source="train", mode="train", appendent=self._get_memory()
-        )
-        self.train_dataset = train_dataset
-        self.data_manager = data_manager
-        self._network.to(self._device)
-       
-        self.train_loader = DataLoader(
-            train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=num_workers
-        )
-        test_dataset = data_manager.get_dataset(
-            np.arange(0, self._total_classes), source="test", mode="test"
-        )
-        self.test_loader = DataLoader(
-            test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=num_workers
-        )
-
-        train_dataset_for_protonet = data_manager.get_dataset(
-            np.arange(self._known_classes, self._total_classes), source="train", mode="test"
-        )
-        self.train_loader_for_protonet = DataLoader(
-            train_dataset_for_protonet, batch_size=self.batch_size, shuffle=True, num_workers=num_workers
-        )
-
-        if len(self._multiple_gpus) > 1:
-            self._network = nn.DataParallel(self._network, self._multiple_gpus)
-
-        self.cal_prototype(self.train_loader_for_protonet, self._network)
-        
-        # Update global prototypes with new knowledge
-        for class_idx in range(self._known_classes, self._total_classes):
-            self.global_prototypes[class_idx] = self._network.img_prototypes[class_idx].clone()
-        
-        try:
-            self._train_proj(self.train_loader, self.test_loader)
+            self._network.update_context_prompt()
+            self._network.extend_task()
             
-            # ذخیره checkpoint اگر مسیر تنظیم شده باشد
-            if self._checkpoint_initialized:
-                self.save_checkpoint(self._cur_task)
-                print(f"Checkpoint for task {self._cur_task} saved")
+            logging.info("Learning on {}-{}".format(self._known_classes, self._total_classes))
+            train_dataset = data_manager.get_dataset(
+                np.arange(self._known_classes, self._total_classes),
+                source="train", mode="train", appendent=self._get_memory()
+            )
+            self.train_dataset = train_dataset
+            self.data_manager = data_manager
+            self._network.to(self._device)
+           
+            self.train_loader = DataLoader(
+                train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=num_workers
+            )
+            test_dataset = data_manager.get_dataset(
+                np.arange(0, self._total_classes), source="test", mode="test"
+            )
+            self.test_loader = DataLoader(
+                test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=num_workers
+            )
 
-        except Exception as e:
-            print(f"Error during training: {e}")
+            train_dataset_for_protonet = data_manager.get_dataset(
+                np.arange(self._known_classes, self._total_classes), source="train", mode="test"
+            )
+            self.train_loader_for_protonet = DataLoader(
+                train_dataset_for_protonet, batch_size=self.batch_size, shuffle=True, num_workers=num_workers
+            )
+
+            if len(self._multiple_gpus) > 1:
+                self._network = nn.DataParallel(self._network, self._multiple_gpus)
+
+            self.cal_prototype(self.train_loader_for_protonet, self._network)
             
-            # ذخیره emergency checkpoint اگر مسیر تنظیم شده باشد
-            if self._checkpoint_initialized:
-                self.save_checkpoint(self._cur_task, emergency=True)
-                print(f"Emergency checkpoint saved")
+            # Update global prototypes with new knowledge
+            for class_idx in range(self._known_classes, self._total_classes):
+                if class_idx < self._network.img_prototypes.shape[0]:
+                    self.global_prototypes[class_idx] = self._network.img_prototypes[class_idx].clone()
+            
+            try:
+                self._train_proj(self.train_loader, self.test_loader)
+                
+                # ذخیره checkpoint اگر مسیر تنظیم شده باشد
+                if self.checkpoint_dir is not None:
+                    self.save_checkpoint(self._cur_task)
+                    print(f"Checkpoint for task {self._cur_task} saved")
 
-            raise e
-        
-        finally:
-            # پاکسازی حافظه بعد از هر تسک
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            except Exception as e:
+                print(f"Error during training: {e}")
+                
+                # ذخیره emergency checkpoint اگر مسیر تنظیم شده باشد
+                if self.checkpoint_dir is not None:
+                    self.save_checkpoint(self._cur_task, emergency=True)
+                    print(f"Emergency checkpoint saved")
 
-        self.build_rehearsal_memory(data_manager, self.samples_per_class)
-        
-        if len(self._multiple_gpus) > 1:
-            self._network = self._network.module
+                raise e
+            
+            finally:
+                # پاکسازی حافظه بعد از هر تسک
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            self.build_rehearsal_memory(data_manager, self.samples_per_class)
+            
+            if len(self._multiple_gpus) > 1:
+                self._network = self._network.module
 
     def _train_proj(self, train_loader, test_loader):
         self._train_transformer = True
