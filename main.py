@@ -2,6 +2,9 @@ import json
 import argparse
 from trainer import train
 
+# در ابتدای فایل
+from google.colab import drive
+drive.mount('/content/drive')
 
 def main():
     args = setup_parser().parse_args()

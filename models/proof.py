@@ -10,8 +10,24 @@ from utils.inc_net import Proof_Net
 from models.base import BaseLearner
 from utils.toolkit import tensor2numpy, get_attribute, ClipLoss
 import os
+from google.colab import drive
+import gc
+import psutil
 
-num_workers = 2
+# Mount Google Drive
+drive.mount('/content/drive')
+
+# مسیر ذخیره‌سازی checkpoint در Google Drive
+CHECKPOINT_DIR = "/content/drive/MyDrive/saved_model/PROOF_Mem_Checkpoints"
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
+def get_checkpoint_path(task_id, emergency=False):
+    """ایجاد مسیر فایل checkpoint"""
+    if emergency:
+        return os.path.join(CHECKPOINT_DIR, f"emergency_checkpoint.pth")
+    return os.path.join(CHECKPOINT_DIR, f"checkpoint_task_{task_id}.pth")
+
+num_workers = 0
 
 class Learner(BaseLearner):
     def __init__(self, args):
@@ -56,43 +72,83 @@ class Learner(BaseLearner):
         logging.info("Exemplar size: {}".format(self.exemplar_size))
     
     def cal_prototype(self, trainloader, model):
+        """محاسبه پروتوتایپ با مدیریت حافظه بهینه"""
         model.eval()
-        embedding_list = []
-        label_list = []
+        prototype_dict = {}
+        
         with torch.no_grad():
             for i, batch in enumerate(trainloader):
+                # مدیریت حافظه
+                if i % 10 == 0:
+                    gc.collect()
+                    torch.cuda.empty_cache()
+                
                 (_, data, label) = batch
                 data = data.to(self._device)
                 embedding = model.convnet.encode_image(data, True)
-                embedding_list.append(embedding.cpu())
-                label_list.append(label.cpu())
-        embedding_list = torch.cat(embedding_list, dim=0)
-        label_list = torch.cat(label_list, dim=0)
+                
+                # انتقال به CPU برای صرفه‌جویی در حافظه GPU
+                embedding = embedding.cpu()
+                label = label.cpu()
+                
+                for cls in label.unique():
+                    cls = cls.item()
+                    mask = (label == cls)
+                    cls_embeddings = embedding[mask]
+                    
+                    if cls not in prototype_dict:
+                        prototype_dict[cls] = []
+                    prototype_dict[cls].append(cls_embeddings.mean(0))
+                
+                # آزاد کردن حافظه
+                del data, embedding, label
+                
+        # محاسبه میانگین نهایی
+        for cls, embeddings_list in prototype_dict.items():
+            final_proto = torch.stack(embeddings_list).mean(0)
+            self._network.img_prototypes[cls] = final_proto.to(self._device)
+            self.prototype_memory[cls] = final_proto
 
-        class_list = list(range(self._known_classes, self._total_classes))
-        for class_index in class_list:
-            data_index = (label_list == class_index).nonzero().squeeze(-1)
-            embedding = embedding_list[data_index]
-            proto = embedding.mean(0)
-            
-            # Enhanced prototype memory management
-            if class_index in self.prototype_memory:
-                # Update existing prototype with momentum
-                old_proto = self.prototype_memory[class_index].to(self._device)
-                new_proto = self.prototype_update_factor * old_proto + (1 - self.prototype_update_factor) * proto
-                self.prototype_memory[class_index] = new_proto.cpu()
-                self._network.img_prototypes[class_index] = new_proto.to(self._device)
-            else:
-                # Initialize new prototype
-                self.prototype_memory[class_index] = proto
-                #self._network.img_prototypes[class_index] = proto.to(self._device)
-                with torch.no_grad():
-                    self._network.img_prototypes.data[class_index] = proto.to(self._device)
-    
     def incremental_train(self, data_manager):
-        self._cur_task += 1
+        self._cur_task += 1        
         self._total_classes = self._known_classes + data_manager.get_task_size(self._cur_task)
         
+        # مسیر checkpoint برای این تسک
+        checkpoint_path = get_checkpoint_path(self._cur_task)
+        emergency_path = get_checkpoint_path(self._cur_task, emergency=True)
+        
+        # بررسی وجود checkpoint برای بازیابی
+        if os.path.exists(checkpoint_path):
+            print(f"Loading checkpoint for task {self._cur_task} from Google Drive...")
+            try:
+                checkpoint = torch.load(checkpoint_path, map_location=self._device)
+                self._network.load_state_dict(checkpoint['model_state_dict'])
+                self.global_prototypes = checkpoint['global_prototypes'].to(self._device)
+                self.prototype_memory = checkpoint['prototype_memory']
+                self._known_classes = checkpoint['known_classes']
+                print(f"Successfully loaded checkpoint for task {self._cur_task}")
+                
+                # فقط ارزیابی انجام بده و به تسک بعدی برو
+                self.build_rehearsal_memory(data_manager, self.samples_per_class)
+                return
+            except Exception as e:
+                print(f"Error loading checkpoint: {e}. Starting from scratch...")
+        
+        # بررسی emergency checkpoint
+        elif os.path.exists(emergency_path):
+            print(f"Loading emergency checkpoint from Google Drive...")
+            try:
+                checkpoint = torch.load(emergency_path, map_location=self._device)
+                self._network.load_state_dict(checkpoint['model_state_dict'])
+                self.global_prototypes = checkpoint['global_prototypes'].to(self._device)
+                self.prototype_memory = checkpoint['prototype_memory']
+                self._known_classes = checkpoint['known_classes']
+                self._cur_task = checkpoint['task']  # بازگشت به تسک ذخیره شده
+                print(f"Successfully loaded emergency checkpoint for task {self._cur_task}")
+            except Exception as e:
+                print(f"Error loading emergency checkpoint: {e}. Starting from scratch...")
+
+
         # به‌روزرسانی پروتوتایپ‌ها در شبکه
         self._network.update_prototype(self._total_classes)
         
@@ -150,7 +206,41 @@ class Learner(BaseLearner):
         for class_idx in range(self._known_classes, self._total_classes):
             self.global_prototypes[class_idx] = self._network.img_prototypes[class_idx].clone()
         
-        self._train_proj(self.train_loader, self.test_loader)
+        try:
+            self._train_proj(self.train_loader, self.test_loader)
+            
+            # ذخیره checkpoint معمولی
+            checkpoint_data = {
+                'model_state_dict': self._network.state_dict(),
+                'global_prototypes': self.global_prototypes.cpu(),
+                'prototype_memory': self.prototype_memory,
+                'known_classes': self._known_classes,
+                'task': self._cur_task
+            }
+            torch.save(checkpoint_data, checkpoint_path)
+            print(f"Checkpoint for task {self._cur_task} saved to Google Drive")
+            
+        except Exception as e:
+            print(f"Error during training: {e}")
+            
+            # ذخیره emergency checkpoint
+            emergency_data = {
+                'model_state_dict': self._network.state_dict(),
+                'global_prototypes': self.global_prototypes.cpu() if self.global_prototypes is not None else None,
+                'prototype_memory': self.prototype_memory,
+                'known_classes': self._known_classes,
+                'task': self._cur_task
+            }
+            torch.save(emergency_data, emergency_path)
+            print(f"Emergency checkpoint saved to Google Drive")
+            
+            raise e
+        
+        finally:
+            # پاکسازی حافظه بعد از هر تسک
+            gc.collect()
+            torch.cuda.empty_cache()
+
         self.build_rehearsal_memory(data_manager, self.samples_per_class)
         
         if len(self._multiple_gpus) > 1:
@@ -188,6 +278,24 @@ class Learner(BaseLearner):
             self._network.train()
             losses = 0.0
             correct, total = 0, 0
+            
+            # نظارت بر حافظه در هر epoch
+            monitor_memory()
+            
+            for i, (_, inputs, targets) in enumerate(train_loader):
+                # پاکسازی حافظه هر 10 batch
+                if i % 10 == 0:
+                    gc.collect()
+                    torch.cuda.empty_cache()
+
+                # ذخیره emergency checkpoint هر 50 batch
+                if i % 50 == 0:
+                    self.save_checkpoint(emergency=True)
+                    gc.collect()
+                    torch.cuda.empty_cache()
+            
+            # ذخیره checkpoint پس از هر epoch
+            self.save_checkpoint(emergency=True)
             
             for i, (_, inputs, targets) in enumerate(train_loader):
                 labels = [class_to_label[y] for y in targets]
@@ -336,3 +444,70 @@ class Learner(BaseLearner):
             y_true.append(targets.cpu().numpy())
 
         return np.concatenate(y_pred), np.concatenate(y_true)
+    
+    def monitor_memory():
+
+        """نظارت بر مصرف حافظه و پاکسازی دوره‌ای"""
+        import psutil
+        memory_usage = psutil.virtual_memory().percent
+        gpu_usage = torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated() * 100
+        
+        if memory_usage > 85 or gpu_usage > 85:
+            gc.collect()
+            torch.cuda.empty_cache()
+            print(f"Memory cleaned - RAM: {memory_usage}%, GPU: {gpu_usage}%")
+
+    def load_checkpoint(self, task_id=None, emergency=False):
+        """بارگذاری checkpoint از Google Drive"""
+        if task_id is None:
+            task_id = self._cur_task
+        
+        checkpoint_path = get_checkpoint_path(task_id, emergency)
+        
+        if not os.path.exists(checkpoint_path):
+            print(f"No checkpoint found at {checkpoint_path}")
+            return False
+        
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self._device)
+            self._network.load_state_dict(checkpoint['model_state_dict'])
+            
+            if checkpoint['global_prototypes'] is not None:
+                self.global_prototypes = checkpoint['global_prototypes'].to(self._device)
+            
+            self.prototype_memory = checkpoint.get('prototype_memory', {})
+            self._known_classes = checkpoint.get('known_classes', 0)
+            
+            if not emergency:
+                self._cur_task = checkpoint.get('task', task_id)
+            
+            print(f"Successfully loaded checkpoint from task {task_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error loading checkpoint: {e}")
+            return False
+
+    def save_checkpoint(self, task_id=None, emergency=False):
+        """ذخیره checkpoint به Google Drive"""
+        if task_id is None:
+            task_id = self._cur_task
+        
+        checkpoint_path = get_checkpoint_path(task_id, emergency)
+        
+        checkpoint_data = {
+            'model_state_dict': self._network.state_dict(),
+            'global_prototypes': self.global_prototypes.cpu() if self.global_prototypes is not None else None,
+            'prototype_memory': self.prototype_memory,
+            'known_classes': self._known_classes,
+            'task': self._cur_task
+        }
+        
+        try:
+            torch.save(checkpoint_data, checkpoint_path)
+            print(f"Checkpoint saved to {checkpoint_path}")
+            return True
+        except Exception as e:
+            print(f"Error saving checkpoint: {e}")
+            return False
+        
