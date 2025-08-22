@@ -10,12 +10,17 @@ import json
 from trainer import train
 from models.proof import Learner
 from utils.data_manager import DataManager
-from google.colab import drive
+import os
 
-# Mount Google Drive
-drive.mount('/content/drive')
+# بررسی اینکه آیا در محیط Colab هستیم
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    CHECKPOINT_DIR = "/content/drive/MyDrive/saved_model/PROOF_Mem_Checkpoints"
+except:
+    CHECKPOINT_DIR = "./checkpoints"
 
-CHECKPOINT_DIR = "/content/drive/MyDrive/saved_model/PROOF_Mem_Checkpoints"
+# اطمینان از وجود دایرکتوری
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 def parse_args():
