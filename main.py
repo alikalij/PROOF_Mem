@@ -1,7 +1,6 @@
 import argparse
 import json
 from trainer import train
-from configs.paths import setup_colab_drive, get_checkpoint_path
 
 
 def main():
