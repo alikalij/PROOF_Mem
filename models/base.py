@@ -123,7 +123,7 @@ class BaseLearner(object):
             text_features = torch.stack(text_features, dim=0)
 
         test_dataset = self.data_manager.get_dataset(np.arange(0, len(total_labels)), source="test", mode="test" )
-        loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
+        loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=2)
 
         y_pred, y_true = [], []
         logits=[]
@@ -238,7 +238,7 @@ class BaseLearner(object):
                 [], source="train", mode="test", appendent=(dd, dt)
             )
             idx_loader = DataLoader(
-                idx_dataset, batch_size=batch_size, shuffle=False, num_workers=4
+                idx_dataset, batch_size=batch_size, shuffle=False, num_workers=2
             )
             vectors, _ = self._extract_vectors(idx_loader)
             vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
@@ -257,7 +257,7 @@ class BaseLearner(object):
                 ret_data=True,
             )
             idx_loader = DataLoader(
-                idx_dataset, batch_size=batch_size, shuffle=False, num_workers=4
+                idx_dataset, batch_size=batch_size, shuffle=False, num_workers=2
             )
             vectors, _ = self._extract_vectors(idx_loader)
             vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
@@ -309,7 +309,7 @@ class BaseLearner(object):
                 appendent=(selected_exemplars, exemplar_targets),
             )
             idx_loader = DataLoader(
-                idx_dataset, batch_size=batch_size, shuffle=False, num_workers=4
+                idx_dataset, batch_size=batch_size, shuffle=False, num_workers=2
             )
             vectors, _ = self._extract_vectors(idx_loader)
             vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
@@ -336,7 +336,7 @@ class BaseLearner(object):
                 [], source="train", mode="test", appendent=(class_data, class_targets)
             )
             class_loader = DataLoader(
-                class_dset, batch_size=batch_size, shuffle=False, num_workers=4
+                class_dset, batch_size=batch_size, shuffle=False, num_workers=2
             )
             vectors, _ = self._extract_vectors(class_loader)
             vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T
@@ -354,7 +354,7 @@ class BaseLearner(object):
                 ret_data=True,
             )
             class_loader = DataLoader(
-                class_dset, batch_size=batch_size, shuffle=False, num_workers=4
+                class_dset, batch_size=batch_size, shuffle=False, num_workers=2
             )
 
             vectors, _ = self._extract_vectors(class_loader)
@@ -406,7 +406,7 @@ class BaseLearner(object):
                 appendent=(selected_exemplars, exemplar_targets),
             )
             exemplar_loader = DataLoader(
-                exemplar_dset, batch_size=batch_size, shuffle=False, num_workers=4
+                exemplar_dset, batch_size=batch_size, shuffle=False, num_workers=2
             )
             vectors, _ = self._extract_vectors(exemplar_loader)
             vectors = (vectors.T / (np.linalg.norm(vectors.T, axis=0) + EPSILON)).T

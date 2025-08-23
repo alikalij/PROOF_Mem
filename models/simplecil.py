@@ -12,7 +12,7 @@ from models.base import BaseLearner
 from utils.toolkit import target2onehot, tensor2numpy,get_attribute
 
 
-num_workers = 8
+num_workers = 2
 
 class Learner(BaseLearner):
     def __init__(self, args):
