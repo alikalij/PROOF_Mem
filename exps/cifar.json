@@ -15,7 +15,7 @@
     "frozen_layers": "visual",
     "tuned_epoch": 2,  
     "init_lr": 0.0015, 
-    "batch_size": 16,
+    "batch_size": 8,
     "weight_decay": 0.03, 
     "min_lr": 1e-6,
     "optimizer": "adam", 
